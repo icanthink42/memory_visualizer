@@ -337,16 +337,30 @@ document.addEventListener('DOMContentLoaded', () => {
 
         // Function to calculate position on a spiral
         function calculateSpiralPosition(index, nodeCount, spacing) {
-            // Angle increases with each node, but slows down as we get further out
+            // Calculate available space
+            const margin = 20; // minimum distance from edges
+            const maxWidth = containerWidth - margin * 2;
+            const maxHeight = containerHeight - margin * 2;
+            const maxRadius = Math.min(maxWidth, maxHeight) / 2;
+
+            // Angle increases with each node
             const angle = index * (Math.PI / 2);
-            // Radius increases with each node, scaled by the spacing
-            const radius = Math.sqrt(index) * spacing;
-            // Add some randomness to the radius, scaled by the spacing
-            const randomRadius = radius + (Math.random() - 0.5) * spacing * 0.3;
+
+            // Radius increases with each node but is bounded
+            const baseRadius = Math.sqrt(index) * spacing;
+            const scale = Math.min(1, maxRadius / (Math.sqrt(nodeCount) * spacing));
+            const radius = baseRadius * scale;
+
+            // Add slight randomness to prevent perfect alignment
+            const randomRadius = radius + (Math.random() - 0.3) * spacing * 0.2;
+
+            // Calculate position and ensure it's within bounds
+            const x = centerX + Math.cos(angle) * randomRadius;
+            const y = centerY + Math.sin(angle) * randomRadius;
 
             return {
-                x: centerX + Math.cos(angle) * randomRadius,
-                y: centerY + Math.sin(angle) * randomRadius
+                x: Math.max(margin, Math.min(containerWidth - margin, x)),
+                y: Math.max(margin, Math.min(containerHeight - margin, y))
             };
         }
 
@@ -374,9 +388,13 @@ document.addEventListener('DOMContentLoaded', () => {
             const spacing = Math.max(maxDimension, minSpacing);
             const pos = calculateSpiralPosition(index, nodeCount, spacing);
 
-            // Position the node
-            node.style.left = `${pos.x - width/2}px`;
-            node.style.top = `${pos.y - height/2}px`;
+            // Position the node, ensuring it stays fully within bounds
+            const margin = 20;
+            const left = Math.max(margin, Math.min(containerWidth - width - margin, pos.x - width/2));
+            const top = Math.max(margin, Math.min(containerHeight - height - margin, pos.y - height/2));
+
+            node.style.left = `${left}px`;
+            node.style.top = `${top}px`;
 
             // Add drag functionality
             let isDragging = false;
@@ -411,8 +429,9 @@ document.addEventListener('DOMContentLoaded', () => {
                     currentY = e.clientY - containerRect.top - initialY;
 
                     // Keep node within container bounds
-                    currentX = Math.max(0, Math.min(currentX, containerRect.width - width));
-                    currentY = Math.max(0, Math.min(currentY, containerRect.height - height));
+                    const margin = 20;
+                    currentX = Math.max(margin, Math.min(currentX, containerRect.width - width - margin));
+                    currentY = Math.max(margin, Math.min(currentY, containerRect.height - height - margin));
 
                     xOffset = currentX;
                     yOffset = currentY;
@@ -436,10 +455,21 @@ document.addEventListener('DOMContentLoaded', () => {
             index++;
         });
 
-        // Update container height based on the spiral size
+        // Adjust spiral spacing to fit within container
         const maxRadius = Math.sqrt(nodeCount) * minSpacing;
-        const minSize = Math.max(maxRadius * 2.5, containerHeight);
-        heapContainer.style.height = `${minSize}px`;
+        const containerSize = Math.min(containerWidth, containerHeight);
+        const scale = containerSize / (maxRadius * 2.5);
+
+        if (scale < 1) {
+            // Reduce spacing if nodes would overflow
+            addressToValue.forEach((value, address) => {
+                const node = heapElements.get(address);
+                const left = parseFloat(node.style.left);
+                const top = parseFloat(node.style.top);
+                node.style.left = `${left * scale}px`;
+                node.style.top = `${top * scale}px`;
+            });
+        }
 
         // Draw arrows from all stack elements to their heap nodes
         stackRefs.forEach((stackElements, address) => {
