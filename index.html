@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Memory Visualizer</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <h1>Even Bad Languages Have Pointers</h1>
+        <div class="repl">
+            <div class="input-area">
+                <textarea id="code-input" placeholder="Enter JavaScript code here..." spellcheck="false">n = {hello: "world"}
+b = 4;
+a = [3,4];
+c = [1]
+g = c</textarea>
+            </div>
+            <div class="output-area">
+                <div id="output"></div>
+            </div>
+            <div class="memory-container">
+                <div class="stack-visualization">
+                    <h2>Stack Memory</h2>
+                    <div id="stack-container"></div>
+                </div>
+                <div class="heap-visualization">
+                    <h2>Heap Memory</h2>
+                    <div id="heap-container"></div>
+                </div>
+                <div id="arrows-container"></div>
+            </div>
+        </div>
+    </div>
+    <script src="script.js"></script>
+</body>
+</html>
