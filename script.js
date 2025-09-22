@@ -30,8 +30,8 @@ document.addEventListener('DOMContentLoaded', () => {
     function formatValue(value) {
         if (Array.isArray(value)) {
             const formattedItems = value.map(item => {
-                if (typeof item === 'object' && item !== null) {
-                    return toHexString(item); // Show memory address for nested objects
+                if (typeof item === 'object' && item !== null || typeof item === 'string') {
+                    return toHexString(item); // Show memory address for nested objects and strings
                 }
                 return String(item);
             });
@@ -40,10 +40,12 @@ document.addEventListener('DOMContentLoaded', () => {
             return 'null';
         } else if (value === undefined) {
             return 'undefined';
+        } else if (typeof value === 'string') {
+            return `"${value}"`; // Show string value in quotes
         } else if (typeof value === 'object') {
             const entries = Object.entries(value).map(([key, val]) => {
-                if (typeof val === 'object' && val !== null) {
-                    return `${key}: ${toHexString(val)}`; // Show memory address for nested objects
+                if (typeof val === 'object' && val !== null || typeof val === 'string') {
+                    return `${key}: ${toHexString(val)}`; // Show memory address for nested objects and strings
                 }
                 return `${key}: ${String(val)}`;
             });
@@ -54,16 +56,18 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function processHeapObjects(value) {
         // First ensure this object has an address
-        if (typeof value === 'object' && value !== null && !heapObjects.has(value)) {
+        if ((typeof value === 'object' && value !== null || typeof value === 'string') && !heapObjects.has(value)) {
             const address = generateHeapAddress();
             heapObjects.set(value, address);
-            heapRefs.set(value, new Set()); // Initialize empty set of references
+            if (typeof value === 'object') {
+                heapRefs.set(value, new Set()); // Initialize empty set of references
+            }
         }
 
         if (Array.isArray(value)) {
             // Process array elements
             value.forEach(item => {
-                if (typeof item === 'object' && item !== null) {
+                if (typeof item === 'object' && item !== null || typeof item === 'string') {
                     processHeapObjects(item);
                     heapRefs.get(value).add(item); // Track reference from array to item
                 }
@@ -71,7 +75,7 @@ document.addEventListener('DOMContentLoaded', () => {
         } else if (typeof value === 'object' && value !== null) {
             // Process object values
             Object.values(value).forEach(val => {
-                if (typeof val === 'object' && val !== null) {
+                if (typeof val === 'object' && val !== null || typeof val === 'string') {
                     processHeapObjects(val);
                     heapRefs.get(value).add(val); // Track reference from object to value
                 }
@@ -92,8 +96,15 @@ document.addEventListener('DOMContentLoaded', () => {
                 return '0x' + Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('').toUpperCase();
             }
         } else if (typeof value === 'string') {
-            // Convert string to array of hex bytes
-            return '0x' + Array.from(value).map(c => c.charCodeAt(0).toString(16).padStart(2, '0')).join('').toUpperCase();
+            // Treat strings as heap objects
+            for (const [existingValue, existingAddress] of heapObjects.entries()) {
+                if (existingValue === value) {
+                    return existingAddress;
+                }
+            }
+            const address = generateHeapAddress();
+            heapObjects.set(value, address);
+            return address;
         } else if (typeof value === 'boolean') {
             return value ? '0x01' : '0x00';
         } else if (value === null) {
@@ -249,7 +260,31 @@ document.addEventListener('DOMContentLoaded', () => {
             addressToValue.set(address, value);
         });
 
-        // Create heap nodes only for unique addresses
+        const nodeSize = 120; // matches CSS width/height
+        const minSpacing = 160; // minimum space between nodes
+        const containerWidth = heapContainer.clientWidth;
+        const containerHeight = heapContainer.clientHeight;
+        const centerX = containerWidth / 2;
+        const centerY = containerHeight / 2;
+
+        // Function to calculate position on a spiral
+        function calculateSpiralPosition(index, nodeCount) {
+            // Angle increases with each node, but slows down as we get further out
+            const angle = index * (Math.PI / 2);
+            // Radius increases with each node
+            const radius = Math.sqrt(index) * minSpacing;
+            // Add some randomness to the radius
+            const randomRadius = radius + (Math.random() - 0.5) * minSpacing * 0.5;
+
+            return {
+                x: centerX + Math.cos(angle) * randomRadius,
+                y: centerY + Math.sin(angle) * randomRadius
+            };
+        }
+
+        // Create heap nodes with spiral positioning
+        let index = 0;
+        const nodeCount = addressToValue.size;
         addressToValue.forEach((value, address) => {
             const node = document.createElement('div');
             node.className = 'heap-node';
@@ -261,8 +296,21 @@ document.addEventListener('DOMContentLoaded', () => {
             node.appendChild(contentDiv);
             heapContainer.appendChild(node);
 
+            // Calculate spiral position
+            const pos = calculateSpiralPosition(index, nodeCount);
+
+            // Position the node
+            node.style.left = `${pos.x - nodeSize/2}px`;
+            node.style.top = `${pos.y - nodeSize/2}px`;
+
             heapElements.set(address, node);
+            index++;
         });
+
+        // Update container height based on the spiral size
+        const maxRadius = Math.sqrt(nodeCount) * minSpacing;
+        const minSize = Math.max(maxRadius * 2.5, containerHeight);
+        heapContainer.style.height = `${minSize}px`;
 
         // Draw arrows from all stack elements to their heap nodes
         stackRefs.forEach((stackElements, address) => {
