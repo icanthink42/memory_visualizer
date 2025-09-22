@@ -9,6 +9,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // Store variable values and their types
     let stackVariables = new Map();
     let heapObjects = new Map();
+    let heapRefs = new Map(); // Track references between heap objects
     let nextHeapAddress = 0x1000; // Starting heap address
 
     // Custom console.log implementation to capture output
@@ -28,15 +29,54 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function formatValue(value) {
         if (Array.isArray(value)) {
-            return `[${value.join(', ')}]`;
+            const formattedItems = value.map(item => {
+                if (typeof item === 'object' && item !== null) {
+                    return toHexString(item); // Show memory address for nested objects
+                }
+                return String(item);
+            });
+            return `[${formattedItems.join(', ')}]`;
         } else if (value === null) {
             return 'null';
         } else if (value === undefined) {
             return 'undefined';
         } else if (typeof value === 'object') {
-            return JSON.stringify(value, null, 1);
+            const entries = Object.entries(value).map(([key, val]) => {
+                if (typeof val === 'object' && val !== null) {
+                    return `${key}: ${toHexString(val)}`; // Show memory address for nested objects
+                }
+                return `${key}: ${String(val)}`;
+            });
+            return `{${entries.join(', ')}}`;
         }
         return String(value);
+    }
+
+    function processHeapObjects(value) {
+        // First ensure this object has an address
+        if (typeof value === 'object' && value !== null && !heapObjects.has(value)) {
+            const address = generateHeapAddress();
+            heapObjects.set(value, address);
+            heapRefs.set(value, new Set()); // Initialize empty set of references
+        }
+
+        if (Array.isArray(value)) {
+            // Process array elements
+            value.forEach(item => {
+                if (typeof item === 'object' && item !== null) {
+                    processHeapObjects(item);
+                    heapRefs.get(value).add(item); // Track reference from array to item
+                }
+            });
+        } else if (typeof value === 'object' && value !== null) {
+            // Process object values
+            Object.values(value).forEach(val => {
+                if (typeof val === 'object' && val !== null) {
+                    processHeapObjects(val);
+                    heapRefs.get(value).add(val); // Track reference from object to value
+                }
+            });
+        }
     }
 
     function toHexString(value) {
@@ -76,17 +116,65 @@ document.addEventListener('DOMContentLoaded', () => {
         return '0xUNKNOWN';
     }
 
+    function findCircleIntersection(x1, y1, x2, y2, centerX, centerY, radius) {
+        const dx = x2 - x1;
+        const dy = y2 - y1;
+        const length = Math.sqrt(dx * dx + dy * dy);
+        const unitX = dx / length;
+        const unitY = dy / length;
+
+        return {
+            x: centerX - unitX * radius,
+            y: centerY - unitY * radius
+        };
+    }
+
     function drawArrow(startElement, endElement) {
         const memoryContainer = document.querySelector('.memory-container');
         const containerRect = memoryContainer.getBoundingClientRect();
         const start = startElement.getBoundingClientRect();
         const end = endElement.getBoundingClientRect();
 
-        // Calculate positions relative to the memory container
-        const startX = start.left + (start.width / 2) - containerRect.left;
-        const startY = start.bottom - containerRect.top;
-        const endX = end.left + (end.width / 2) - containerRect.left;
-        const endY = end.top - containerRect.top;
+        // Calculate centers relative to the memory container
+        const startCenterX = start.left + (start.width / 2) - containerRect.left;
+        const startCenterY = start.top + (start.height / 2) - containerRect.top;
+        const endCenterX = end.left + (end.width / 2) - containerRect.left;
+        const endCenterY = end.top + (end.height / 2) - containerRect.top;
+
+        // For heap nodes (circles), calculate intersection points
+        let startX = startCenterX;
+        let startY = startCenterY;
+        let endX = endCenterX;
+        let endY = endCenterY;
+
+        if (endElement.classList.contains('heap-node')) {
+            const radius = end.width / 2;
+            const intersection = findCircleIntersection(
+                startCenterX, startCenterY,
+                endCenterX, endCenterY,
+                endCenterX, endCenterY,
+                radius
+            );
+            endX = intersection.x;
+            endY = intersection.y;
+        }
+
+        if (startElement.classList.contains('heap-node')) {
+            const radius = start.width / 2;
+            const intersection = findCircleIntersection(
+                endCenterX, endCenterY,
+                startCenterX, startCenterY,
+                startCenterX, startCenterY,
+                radius
+            );
+            startX = intersection.x;
+            startY = intersection.y;
+        }
+
+        // For stack boxes, adjust to bottom center if not a heap node
+        if (!startElement.classList.contains('heap-node')) {
+            startY = start.bottom - containerRect.top;
+        }
 
         // Create arrow element
         const arrow = document.createElement('div');
@@ -186,6 +274,22 @@ document.addEventListener('DOMContentLoaded', () => {
                 });
             }
         });
+
+        // Draw arrows between heap objects
+        heapRefs.forEach((refs, sourceObj) => {
+            const sourceAddress = heapObjects.get(sourceObj);
+            const sourceElement = heapElements.get(sourceAddress);
+
+            refs.forEach(targetObj => {
+                const targetAddress = heapObjects.get(targetObj);
+                const targetElement = heapElements.get(targetAddress);
+
+                if (sourceElement && targetElement) {
+                    const arrow = drawArrow(sourceElement, targetElement);
+                    arrowsContainer.appendChild(arrow);
+                }
+            });
+        });
     }
 
     function executeCode() {
@@ -214,8 +318,15 @@ document.addEventListener('DOMContentLoaded', () => {
                 throw result.error;
             }
 
-            // Update stack variables
+            // Process and allocate heap objects first
             if (result.vars) {
+                Object.values(result.vars).forEach(value => {
+                    if (typeof value === 'object' && value !== null) {
+                        processHeapObjects(value);
+                    }
+                });
+
+                // Then update stack variables
                 Object.entries(result.vars).forEach(([name, value]) => {
                     stackVariables.set(name, value);
                 });
