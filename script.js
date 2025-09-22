@@ -10,6 +10,8 @@ document.addEventListener('DOMContentLoaded', () => {
     let stackVariables = new Map();
     let heapObjects = new Map();
     let heapRefs = new Map(); // Track references between heap objects
+    let stackRefs = new Map(); // Track stack-to-heap references
+    let heapElements = new Map(); // Track heap DOM elements
     let nextHeapAddress = 0x1000; // Starting heap address
 
     // Custom console.log implementation to capture output
@@ -127,16 +129,47 @@ document.addEventListener('DOMContentLoaded', () => {
         return '0xUNKNOWN';
     }
 
-    function findCircleIntersection(x1, y1, x2, y2, centerX, centerY, radius) {
-        const dx = x2 - x1;
-        const dy = y2 - y1;
+    function findBoxIntersection(startX, startY, endX, endY, boxX, boxY, boxWidth, boxHeight) {
+        // Calculate box center
+        const centerX = boxX + boxWidth / 2;
+        const centerY = boxY + boxHeight / 2;
+
+        // Vector from start to end
+        const dx = endX - startX;
+        const dy = endY - startY;
+
+        // Normalize the vector
         const length = Math.sqrt(dx * dx + dy * dy);
         const unitX = dx / length;
         const unitY = dy / length;
 
+        // Calculate intersection with box edges
+        let t;
+
+        // Check vertical edges
+        if (unitX > 0) {
+            t = (boxX - startX) / unitX;
+        } else {
+            t = (boxX + boxWidth - startX) / unitX;
+        }
+
+        let intersectX = startX + unitX * t;
+        let intersectY = startY + unitY * t;
+
+        // If intersection point is outside vertical bounds, use horizontal edges
+        if (intersectY < boxY || intersectY > boxY + boxHeight) {
+            if (unitY > 0) {
+                t = (boxY - startY) / unitY;
+            } else {
+                t = (boxY + boxHeight - startY) / unitY;
+            }
+            intersectX = startX + unitX * t;
+            intersectY = startY + unitY * t;
+        }
+
         return {
-            x: centerX - unitX * radius,
-            y: centerY - unitY * radius
+            x: intersectX,
+            y: intersectY
         };
     }
 
@@ -152,31 +185,33 @@ document.addEventListener('DOMContentLoaded', () => {
         const endCenterX = end.left + (end.width / 2) - containerRect.left;
         const endCenterY = end.top + (end.height / 2) - containerRect.top;
 
-        // For heap nodes (circles), calculate intersection points
+        // Calculate start and end points with box intersections
         let startX = startCenterX;
         let startY = startCenterY;
         let endX = endCenterX;
         let endY = endCenterY;
 
         if (endElement.classList.contains('heap-node')) {
-            const radius = end.width / 2;
-            const intersection = findCircleIntersection(
+            const intersection = findBoxIntersection(
                 startCenterX, startCenterY,
                 endCenterX, endCenterY,
-                endCenterX, endCenterY,
-                radius
+                end.left - containerRect.left,
+                end.top - containerRect.top,
+                end.width,
+                end.height
             );
             endX = intersection.x;
             endY = intersection.y;
         }
 
         if (startElement.classList.contains('heap-node')) {
-            const radius = start.width / 2;
-            const intersection = findCircleIntersection(
+            const intersection = findBoxIntersection(
                 endCenterX, endCenterY,
                 startCenterX, startCenterY,
-                startCenterX, startCenterY,
-                radius
+                start.left - containerRect.left,
+                start.top - containerRect.top,
+                start.width,
+                start.height
             );
             startX = intersection.x;
             startY = intersection.y;
@@ -216,7 +251,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function updateStackVisualization() {
         stackContainer.innerHTML = '';
-        const stackRefs = new Map(); // Map of address -> array of stack elements
+        stackRefs.clear(); // Clear existing references
 
         stackVariables.forEach((value, name) => {
             const box = document.createElement('div');
@@ -252,7 +287,7 @@ document.addEventListener('DOMContentLoaded', () => {
     function updateHeapVisualization(stackRefs) {
         heapContainer.innerHTML = '';
         arrowsContainer.innerHTML = '';
-        const heapElements = new Map();
+        heapElements.clear();
         const addressToValue = new Map();
 
         // First, create a map of unique addresses to their values
@@ -260,21 +295,54 @@ document.addEventListener('DOMContentLoaded', () => {
             addressToValue.set(address, value);
         });
 
-        const nodeSize = 120; // matches CSS width/height
-        const minSpacing = 160; // minimum space between nodes
+        // Create a temporary element to measure text
+        const measureDiv = document.createElement('div');
+        measureDiv.style.position = 'absolute';
+        measureDiv.style.visibility = 'hidden';
+        measureDiv.style.whiteSpace = 'pre-wrap';
+        measureDiv.style.padding = '1rem';
+        measureDiv.style.maxWidth = '400px'; // Maximum width we'll allow
+        measureDiv.style.fontFamily = 'Monaco, Menlo, Ubuntu Mono, monospace';
+        measureDiv.style.fontSize = '0.85rem';
+        document.body.appendChild(measureDiv);
+
+        // Function to calculate node size based on content
+        function calculateNodeSize(value) {
+            measureDiv.textContent = formatValue(value);
+            const rect = measureDiv.getBoundingClientRect();
+            const minWidth = 120;
+            const minHeight = 60;
+            const padding = 40;
+
+            return {
+                width: Math.max(minWidth, rect.width + padding),
+                height: Math.max(minHeight, rect.height + padding)
+            };
+        }
+
+        // Calculate sizes for all nodes
+        const nodeSizes = new Map();
+        addressToValue.forEach((value, address) => {
+            nodeSizes.set(address, calculateNodeSize(value));
+        });
+
+        // Clean up measurement div
+        document.body.removeChild(measureDiv);
+
+        const minSpacing = 40; // minimum space between nodes
         const containerWidth = heapContainer.clientWidth;
         const containerHeight = heapContainer.clientHeight;
         const centerX = containerWidth / 2;
         const centerY = containerHeight / 2;
 
         // Function to calculate position on a spiral
-        function calculateSpiralPosition(index, nodeCount) {
+        function calculateSpiralPosition(index, nodeCount, spacing) {
             // Angle increases with each node, but slows down as we get further out
             const angle = index * (Math.PI / 2);
-            // Radius increases with each node
-            const radius = Math.sqrt(index) * minSpacing;
-            // Add some randomness to the radius
-            const randomRadius = radius + (Math.random() - 0.5) * minSpacing * 0.5;
+            // Radius increases with each node, scaled by the spacing
+            const radius = Math.sqrt(index) * spacing;
+            // Add some randomness to the radius, scaled by the spacing
+            const randomRadius = radius + (Math.random() - 0.5) * spacing * 0.3;
 
             return {
                 x: centerX + Math.cos(angle) * randomRadius,
@@ -286,8 +354,13 @@ document.addEventListener('DOMContentLoaded', () => {
         let index = 0;
         const nodeCount = addressToValue.size;
         addressToValue.forEach((value, address) => {
+            const { width, height } = nodeSizes.get(address);
             const node = document.createElement('div');
             node.className = 'heap-node';
+
+            // Set size of this specific node
+            node.style.width = `${width}px`;
+            node.style.height = `${height}px`;
 
             const contentDiv = document.createElement('div');
             contentDiv.className = 'heap-node-content';
@@ -296,12 +369,68 @@ document.addEventListener('DOMContentLoaded', () => {
             node.appendChild(contentDiv);
             heapContainer.appendChild(node);
 
-            // Calculate spiral position
-            const pos = calculateSpiralPosition(index, nodeCount);
+            // Calculate spiral position with spacing based on maximum node dimension
+            const maxDimension = Math.max(width, height);
+            const spacing = Math.max(maxDimension, minSpacing);
+            const pos = calculateSpiralPosition(index, nodeCount, spacing);
 
             // Position the node
-            node.style.left = `${pos.x - nodeSize/2}px`;
-            node.style.top = `${pos.y - nodeSize/2}px`;
+            node.style.left = `${pos.x - width/2}px`;
+            node.style.top = `${pos.y - height/2}px`;
+
+            // Add drag functionality
+            let isDragging = false;
+            let currentX;
+            let currentY;
+            let initialX;
+            let initialY;
+            let xOffset = pos.x - width/2;
+            let yOffset = pos.y - height/2;
+
+            node.addEventListener("mousedown", dragStart);
+            document.addEventListener("mousemove", drag);
+            document.addEventListener("mouseup", dragEnd);
+
+            function dragStart(e) {
+                const containerRect = heapContainer.getBoundingClientRect();
+                initialX = e.clientX - containerRect.left - xOffset;
+                initialY = e.clientY - containerRect.top - yOffset;
+
+                if (e.target === node || e.target === contentDiv) {
+                    isDragging = true;
+                    node.classList.add('dragging');
+                }
+            }
+
+            function drag(e) {
+                if (isDragging) {
+                    e.preventDefault();
+
+                    const containerRect = heapContainer.getBoundingClientRect();
+                    currentX = e.clientX - containerRect.left - initialX;
+                    currentY = e.clientY - containerRect.top - initialY;
+
+                    // Keep node within container bounds
+                    currentX = Math.max(0, Math.min(currentX, containerRect.width - width));
+                    currentY = Math.max(0, Math.min(currentY, containerRect.height - height));
+
+                    xOffset = currentX;
+                    yOffset = currentY;
+
+                    node.style.left = `${currentX}px`;
+                    node.style.top = `${currentY}px`;
+
+                    // Update arrows
+                    requestAnimationFrame(updateArrows);
+                }
+            }
+
+            function dragEnd(e) {
+                initialX = currentX;
+                initialY = currentY;
+                isDragging = false;
+                node.classList.remove('dragging');
+            }
 
             heapElements.set(address, node);
             index++;
@@ -340,12 +469,47 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
+    function updateArrows() {
+        // Clear existing arrows
+        arrowsContainer.innerHTML = '';
+
+        // Redraw all arrows
+        stackRefs.forEach((stackElements, address) => {
+            const heapElement = heapElements.get(address);
+            if (heapElement) {
+                stackElements.forEach(stackElement => {
+                    const arrow = drawArrow(stackElement, heapElement);
+                    arrowsContainer.appendChild(arrow);
+                });
+            }
+        });
+
+        // Draw arrows between heap objects
+        heapRefs.forEach((refs, sourceObj) => {
+            const sourceAddress = heapObjects.get(sourceObj);
+            const sourceElement = heapElements.get(sourceAddress);
+
+            refs.forEach(targetObj => {
+                const targetAddress = heapObjects.get(targetObj);
+                const targetElement = heapElements.get(targetAddress);
+
+                if (sourceElement && targetElement) {
+                    const arrow = drawArrow(sourceElement, targetElement);
+                    arrowsContainer.appendChild(arrow);
+                }
+            });
+        });
+    }
+
     function executeCode() {
         // Clear previous output and logs
         output.innerHTML = '';
         logs.length = 0;
         stackVariables.clear();
         heapObjects.clear();
+        heapRefs.clear();
+        stackRefs.clear();
+        heapElements.clear();
         nextHeapAddress = 0x1000;
 
         try {

@@ -183,19 +183,30 @@ h1 {
 }
 
 .heap-node {
-    width: 120px;
-    height: 120px;
-    border-radius: 50%;
+    border-radius: 16px;
     background: #f8f9fa;
     border: 2px solid #805ad5;
     display: flex;
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    padding: 0.5rem;
+    padding: 1.5rem;
     position: absolute;
     font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
-    transition: all 0.3s ease;
+    min-width: 120px;
+    min-height: 60px;
+    cursor: move;
+    user-select: none;
+    z-index: 2;
+}
+
+.heap-node:hover {
+    box-shadow: 0 0 0 2px rgba(128, 90, 213, 0.4);
+}
+
+.heap-node.dragging {
+    opacity: 0.9;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
 }
 
 .memory-container {
